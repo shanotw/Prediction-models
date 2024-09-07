@@ -1,0 +1,81 @@
+# Import Modules
+import os
+import numpy as np 
+import pandas as pd 
+import matplotlib. pyplot as plt 
+from pycaret.datasets import get_data
+from pycaret.classification import *
+from sklearn.model_selection import train_test_split
+import boto3
+
+# Load Dataset
+diabetes = get_data('diabetes')
+diabetes.describe()
+diabetes.isna().sum()
+diabetes.columns = ['Pregnancies', 'Glucose Concentration',  'Blood Pressure', 'Skin Thickness', 'Insulin', 'Bmi', 'pedigree','age','class']
+
+# Plot the Dataset
+columns = diabetes.columns
+rows = 4
+col = 2
+fig, axs = plt.subplots(rows, col, figsize = (15,10))
+[[axs[i,j].plot(diabetes[columns[i+j]]), axs[i,j].set_title(columns[i+j])] for i in range(rows) for j in range(col)]
+plt.tight_layout()
+plt.show()
+
+# Split the Training and Testing Data
+train, test = train_test_split(diabetes, test_size = 0.2, random_state = 5)
+train.describe()
+
+# Initialize the Setup
+setup(data = train, target = 'class', numeric_features = ['Pregnancies'])
+
+# Compare the Models
+best_model = compare_models(sort = 'F1', probability_threshold = 0.7)
+print(best_model)
+
+# Tune the Model
+best_tuned_model = tune_model(best_model, optimize = "Accuracy", choose_better = True)
+
+# Plot the Learning Curve of the Model
+plot_model(best_tuned_model, plot = 'learning', use_train_data=True)
+
+# Plot the Confusion Matrix of the Model
+plot_model(best_tuned_model, plot = 'class_report',use_train_data = True)
+
+# Create the Morris Sensitivity Convergence Index Analysis
+interpret_model(best_tuned_model, plot = 'msa')
+
+# Finalize the Model
+final_model = finalize_model(best_tuned_model)
+
+# Configure AWS
+AWS_DEFAULT_REGION = 'us-west-2'
+os.environ["AWS_ACCESS_KEY_ID"] = str("access-key-id")
+os.environ["AWS_SECRET_ACCESS_KEY"] = str("secret-access-key")
+os.environ["AWS_DEFAULT_REGION"] = AWS_DEFAULT_REGION 
+
+# Create S3 Bucket
+s3 = boto3.client('s3')
+response = s3.create_bucket(
+    Bucket = 'machinelearningmodelstest',
+    CreateBucketConfiguration={
+        'LocationConstraint': AWS_DEFAULT_REGION,
+    },
+)
+
+# Deploy the Model
+bucketName = "machinelearningmodelstest"
+deploy_model(model = final_model, model_name = 'model-diabetes', platform = 'aws', authentication = {'bucket':bucketName})
+
+# Load Model from Cloud
+imported_model = load_model('model-diabetes', platform = 'aws', authentication = {'bucket': bucketName})
+
+# Predict Using Deployed Model
+results = predict_model(imported_model, data= test)
+
+# Create a Fast API
+create_api(imported_model, 'api')
+
+# Terminal: python api.py
+# Terminal: aws s3 rm s3
